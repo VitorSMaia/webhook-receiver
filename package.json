@@ -1,0 +1,19 @@
+{
+  "name": "webhook-receiver",
+  "version": "1.0.0",
+  "description": "Servidor para receber webhooks com verificação de assinatura HMAC-SHA256",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "sign": "node scripts/sign.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "dotenv": "^16.4.7"
+  }
+}
