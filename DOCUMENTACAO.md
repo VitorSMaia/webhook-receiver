@@ -582,19 +582,53 @@ Sugestões:
 
 ---
 
+## Deploy
+
+### Onde hospedar
+
+| Plataforma | Tipo | Observação |
+|-----------|------|------------|
+| Render, Railway, Fly.io, VPS | Processo persistente | Roda `npm start` como está. Funciona com memória, mas prefira Redis para não perder dados em restart/deploy. |
+| **Vercel** | Serverless | **Exige Redis (Upstash)** — a memória não é compartilhada entre invocações; sem Redis o histórico fica vazio/instável. |
+
+### Deploy na Vercel (com Upstash Redis)
+
+1. **Suba o repositório no GitHub** e importe o projeto na Vercel (Application Preset: `Express`, Root `./`, sem Build Command).
+2. **Crie um Redis Upstash** (grátis): em [upstash.com](https://upstash.com) ou pela própria Vercel em **Storage → Marketplace → Upstash for Redis**. A integração da Vercel injeta as variáveis automaticamente no projeto.
+3. **Defina as variáveis de ambiente** do projeto na Vercel (Settings → Environment Variables):
+   - `UPSTASH_REDIS_REST_URL` e `UPSTASH_REDIS_REST_TOKEN` (ou `KV_REST_API_URL` / `KV_REST_API_TOKEN` da integração).
+   - `VERIFY_SIGNATURE` (`true`/`false`) e, se `true`, `WEBHOOK_SECRET` e `SIGNATURE_HEADER`.
+   - `PUBLIC_URL` = a URL do seu deploy (ex: `https://webhook-receiver.vercel.app`), para o painel exibir as URLs completas.
+4. **Deploy.** O `vercel.json` roteia todas as requisições para `api/index.js` (a app Express); o painel, a API e as rotas de webhook são resolvidos pelo Express.
+
+> O `.env` **não** é versionado (está no `.gitignore`). Configure os segredos nas variáveis de ambiente da Vercel.
+
+### Como funciona o entrypoint serverless
+
+- `src/app.js` cria e exporta a app Express (sem `app.listen`).
+- `api/index.js` apenas reexporta a app como handler da função serverless.
+- `src/server.js` é o bootstrap para hosts com processo persistente (`app.listen` + limpeza de sessões).
+- O `src/store.js` usa **Redis** quando há credenciais e cai para **memória** quando não há.
+
+---
+
 ## Estrutura do projeto
 
 ```
 webhook-receiver/
+├── api/
+│   └── index.js            # Entrypoint serverless da Vercel (exporta a app)
 ├── src/
-│   ├── server.js           # Servidor Express, painel, API e rotas de webhook
-│   ├── store.js            # Armazenamento em memória de links e webhooks
+│   ├── app.js              # App Express (painel, API e rotas de webhook)
+│   ├── server.js           # Bootstrap local (app.listen) para host persistente
+│   ├── store.js            # Store por sessão: Redis (Upstash) ou memória
 │   ├── generatePath.js     # Geração da rota aleatória
 │   └── verifySignature.js  # Validação HMAC-SHA256
 ├── public/
 │   └── index.html          # Painel de administração (GET /)
 ├── scripts/
 │   └── sign.js             # Utilitário para gerar curl de teste
+├── vercel.json             # Roteamento serverless (rewrites + includeFiles)
 ├── .env.example            # Modelo de configuração
 ├── package.json
 ├── README.md               # Visão geral rápida
