@@ -1,4 +1,4 @@
-import app, { config } from './app.js';
+import app, { appConfig as config } from './app.js';
 import * as store from './store.js';
 
 // Bootstrap para desenvolvimento local / hosts com processo persistente

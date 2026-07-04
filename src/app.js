@@ -26,7 +26,10 @@ let fixedPathUsed = false;
 const SESSION_COOKIE = 'wr_session';
 
 // Config exposta para o bootstrap local (logs de inicialização).
-export const config = {
+// NÃO renomeie para `config`: na Vercel esse é um export reservado que o
+// builder tenta avaliar estaticamente (só aceita literais) e falha com
+// "Unhandled type: CallExpression" ao ver Boolean(...) / store.usingRedis.
+export const appConfig = {
   PORT,
   PUBLIC_URL,
   SIGNATURE_HEADER,
