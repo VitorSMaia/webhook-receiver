@@ -114,7 +114,29 @@
     .foot-btn:hover { background: var(--accent-strong); }
 
     /* ---------------- Main ---------------- */
-    .main { flex: 1; display: flex; min-width: 0; }
+    .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+    /* App bar (apenas mobile/tablet) */
+    .appbar {
+      display: none; align-items: center; gap: 10px; height: 54px; flex-shrink: 0;
+      padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--sidebar);
+    }
+    .appbar .abrand { font-weight: 700; font-size: 15px; }
+    .appbar .spacer { margin-left: auto; }
+    .menu-btn, .back-btn {
+      background: 0; border: 0; cursor: pointer; color: var(--text);
+      width: 36px; height: 36px; border-radius: 8px; display: grid; place-items: center; flex-shrink: 0;
+    }
+    .menu-btn:hover, .back-btn:hover { background: var(--hover); }
+    .menu-btn svg, .back-btn svg { width: 20px; height: 20px; }
+    .back-btn { display: none; }
+
+    /* Fundo escuro atrás do drawer da sidebar */
+    .backdrop {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45);
+      z-index: 55; backdrop-filter: blur(1px);
+    }
+    .backdrop.show { display: block; }
 
     /* Live view: events + details */
     #liveView { display: flex; flex: 1; min-width: 0; }
@@ -291,9 +313,56 @@
     }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
-    @media (max-width: 900px) {
-      .events { width: 260px; }
+    /* ---------------- Tablet (<= 1024px) ---------------- */
+    @media (max-width: 1024px) {
+      /* Sidebar vira drawer sobreposto, aberto pelo hambúrguer */
+      .sidebar {
+        position: fixed; top: 0; left: 0; height: 100%; z-index: 60;
+        width: 260px; transform: translateX(-100%);
+        transition: transform .22s ease; box-shadow: 0 0 40px rgba(0,0,0,.25);
+      }
+      .sidebar.open { transform: none; }
+      .appbar { display: flex; }
+      .events { width: 300px; }
       .chip { display: none; }
+      .bellhide { display: none; }
+      /* Evita que o texto do rodapé colida com os links em telas estreitas */
+      .foot { flex-direction: column; height: auto; gap: 3px; align-items: flex-start; padding: 9px 16px; }
+    }
+
+    /* ---------------- Mobile (<= 768px) ---------------- */
+    @media (max-width: 768px) {
+      /* Master-detail: mostra a lista OU os detalhes, um de cada vez */
+      #liveView .events { width: 100%; border-right: 0; }
+      #liveView .details { display: none; }
+      #liveView.detail-open .events { display: none; }
+      #liveView.detail-open .details { display: flex; }
+
+      .back-btn { display: grid; }
+      .details .topbar { padding: 0 10px; gap: 6px; }
+      .tabs { gap: 14px; }
+      .tab { font-size: 12.5px; }
+      .detail-tabs { gap: 16px; padding: 0 14px; overflow-x: auto; }
+      .detail-tabs::-webkit-scrollbar { display: none; }
+      .detail-body { padding: 16px 14px; }
+      .panel-body { padding: 20px 16px; }
+
+      /* Empilha chave/valor para não espremer em telas estreitas */
+      .kv { grid-template-columns: 1fr; row-gap: 2px; }
+      .kv .k { margin-top: 8px; }
+      .kv .k:first-child { margin-top: 0; }
+
+      .foot { flex-direction: column; height: auto; gap: 4px; align-items: flex-start; padding: 10px 14px; }
+
+      /* Some com o texto longo do botão; deixa compacto */
+      .btn-primary { padding: 8px 11px; }
+      .btn-primary .btn-label { display: none; }
+    }
+
+    @media (max-width: 420px) {
+      .events-sub { padding: 10px 14px 6px; }
+      .event { padding: 12px 14px; }
+      .col-head { padding: 0 12px; }
     }
   </style>
 </head>
@@ -320,8 +389,22 @@
         </button>
       </div>
     </aside>
+    <div class="backdrop" id="backdrop"></div>
 
     <div class="main">
+      <!-- Barra superior (apenas mobile/tablet) -->
+      <header class="appbar">
+        <button class="menu-btn" id="menuBtn" title="Menu" aria-label="Abrir menu">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <span class="abrand">Webhook Receiver</span>
+        <span class="spacer"></span>
+        <button class="icon-btn" id="newWebhook3" title="Novo webhook">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+        <button class="icon-btn" id="themeBtn3" title="Alternar tema"></button>
+      </header>
+
       <!-- Live Stream view -->
       <section id="liveView">
         <div class="events">
@@ -340,6 +423,9 @@
 
         <div class="details">
           <div class="topbar">
+            <button class="back-btn" id="backBtn" title="Voltar" aria-label="Voltar para a lista">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+            </button>
             <div class="tabs" id="viewTabs">
               <button class="tab active" data-vtab="explorer">Explorer</button>
               <button class="tab" data-vtab="history">History</button>
@@ -352,9 +438,9 @@
               </div>
               <button class="btn-primary" id="newWebhook">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                New Webhook
+                <span class="btn-label">New Webhook</span>
               </button>
-              <button class="icon-btn" id="bellBtn" title="Notificações">
+              <button class="icon-btn bellhide" id="bellBtn" title="Notificações">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
               </button>
               <button class="icon-btn" id="themeBtn" title="Alternar tema"></button>
@@ -387,7 +473,7 @@
           <div class="topbar-right">
             <button class="btn-primary" id="newWebhook2">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              New Webhook
+              <span class="btn-label">New Webhook</span>
             </button>
             <button class="icon-btn" id="themeBtn2" title="Alternar tema"></button>
           </div>
@@ -503,13 +589,23 @@
     function applyTheme() {
       document.documentElement.setAttribute('data-theme', state.theme);
       const icon = state.theme === 'light' ? ICONS.moon : ICONS.sun;
-      $$('#themeBtn, #themeBtn2').forEach((b) => (b.innerHTML = icon));
+      $$('#themeBtn, #themeBtn2, #themeBtn3').forEach((b) => (b.innerHTML = icon));
     }
     function toggleTheme() {
       state.theme = state.theme === 'light' ? 'dark' : 'light';
       localStorage.setItem('wr-theme', state.theme);
       applyTheme();
     }
+
+    /* ---------- sidebar drawer (mobile/tablet) ---------- */
+    const isMobile = () => window.matchMedia('(max-width: 768px)').matches;
+    function openSidebar() { $('.sidebar').classList.add('open'); $('#backdrop').classList.add('show'); }
+    function closeSidebar() { $('.sidebar').classList.remove('open'); $('#backdrop').classList.remove('show'); }
+    function toggleSidebar() { $('.sidebar').classList.contains('open') ? closeSidebar() : openSidebar(); }
+
+    /* No mobile a lista e os detalhes se alternam (um por vez) */
+    function showDetailPane() { if (isMobile()) $('#liveView').classList.add('detail-open'); }
+    function showListPane() { $('#liveView').classList.remove('detail-open'); }
 
     /* ---------- nav ---------- */
     function renderNav() {
@@ -528,6 +624,8 @@
     function setView(view) {
       state.view = view;
       renderNav();
+      closeSidebar();
+      showListPane();
       const isLive = view === 'live';
       $('#liveView').style.display = isLive ? 'flex' : 'none';
       $('#panelView').style.display = isLive ? 'none' : 'flex';
@@ -581,7 +679,7 @@
         list.append(
           el('div', {
             class: 'event' + (h.id === state.selectedId ? ' active' : ''),
-            onclick: () => { state.selectedId = h.id; renderEvents(); renderDetail(); },
+            onclick: () => { state.selectedId = h.id; renderEvents(); renderDetail(); showDetailPane(); },
           }, [
             el('div', { class: 'event-row1' }, [
               el('span', { class: 'method', text: h.method }),
@@ -824,6 +922,12 @@
     $('#endpointChip').addEventListener('click', () => { const l = activeLink(); if (l) copy(l.publicUrl || l.localUrl); });
     $('#themeBtn').addEventListener('click', toggleTheme);
     $('#themeBtn2').addEventListener('click', toggleTheme);
+    $('#themeBtn3').addEventListener('click', toggleTheme);
+    $('#newWebhook3').addEventListener('click', newWebhook);
+    $('#menuBtn').addEventListener('click', toggleSidebar);
+    $('#backdrop').addEventListener('click', closeSidebar);
+    $('#backBtn').addEventListener('click', showListPane);
+    window.addEventListener('resize', () => { if (!isMobile()) { closeSidebar(); showListPane(); } });
     $('#statusBtn').addEventListener('click', pingStatus);
     $('#bellBtn').addEventListener('click', () => toast('Notificações: ' + state.webhooks.length + ' evento(s) em memória'));
     $('#footDocs').addEventListener('click', (e) => { e.preventDefault(); setView('docs'); });
