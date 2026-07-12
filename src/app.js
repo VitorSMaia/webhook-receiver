@@ -3,9 +3,13 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
+import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { generateWebhookPath, normalizeWebhookPath } from './generatePath.js';
 import { verifySignature } from './verifySignature.js';
+import { extractEventId } from './extractEventId.js';
+import { onWebhookReceived } from './onWebhook.js';
+import { sanitizeHeaders } from './sanitizeHeaders.js';
 import * as store from './store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -27,11 +31,46 @@ let fixedPathUsed = false;
 const SESSION_COOKIE = 'wr_session';
 const BODY_LIMIT = process.env.BODY_LIMIT || '1mb';
 const WEBHOOK_RATE_LIMIT = Number(process.env.WEBHOOK_RATE_LIMIT || 60);
+const API_RATE_LIMIT = Number(process.env.API_RATE_LIMIT || 30);
+const IS_PRODUCTION =
+  process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production';
 const IS_HTTPS = Boolean(PUBLIC_URL?.startsWith('https://'));
+const SECURE_COOKIE = IS_PRODUCTION || IS_HTTPS;
+const TRUST_PROXY = process.env.TRUST_PROXY === 'true' || IS_PRODUCTION;
+
+if (TRUST_PROXY) {
+  app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1));
+}
+
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:'],
+        connectSrc: ["'self'"],
+        fontSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+  })
+);
 
 const webhookLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: WEBHOOK_RATE_LIMIT,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'limite de requisições excedido' },
+});
+
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: API_RATE_LIMIT,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'limite de requisições excedido' },
@@ -50,6 +89,11 @@ export const appConfig = {
   secretConfigured: Boolean(WEBHOOK_SECRET),
   usingRedis: store.usingRedis,
 };
+
+if (IS_PRODUCTION && !VERIFY_SIGNATURE) {
+  console.error('❌ VERIFY_SIGNATURE=false não é permitido em produção.');
+  process.exit(1);
+}
 
 if (VERIFY_SIGNATURE && !WEBHOOK_SECRET) {
   console.error('❌ WEBHOOK_SECRET não definido. Copie .env.example para .env e preencha,');
@@ -114,12 +158,22 @@ async function ensureSession(req, res) {
   await store.addLink(id, initialPathForSession());
   res.cookie(SESSION_COOKIE, id, {
     httpOnly: true,
-    secure: IS_HTTPS,
-    sameSite: 'lax',
+    secure: SECURE_COOKIE,
+    sameSite: 'strict',
     path: '/',
     maxAge: 1000 * 60 * 60 * 24 * 7,
   });
   return id;
+}
+
+/** Rejeita mutações da API sem token CSRF válido. */
+async function assertCsrf(req, res, sessionId) {
+  const token = req.get('X-CSRF-Token');
+  if (!(await store.validateCsrf(sessionId, token))) {
+    res.status(403).json({ error: 'token CSRF inválido' });
+    return false;
+  }
+  return true;
 }
 
 /** Monta as URLs (local e pública) de uma rota de webhook. */
@@ -145,6 +199,8 @@ app.get(
 // ---------------------------------------------------------------------------
 // API do painel — sempre escopada à sessão do cookie
 // ---------------------------------------------------------------------------
+app.use('/api', apiLimiter);
+
 app.get(
   '/api/state',
   wrap(async (req, res) => {
@@ -152,6 +208,7 @@ app.get(
     const links = await store.listLinks(sid);
     res.json({
       session: sid.slice(0, 8),
+      csrfToken: await store.getCsrfToken(sid),
       verifySignature: VERIFY_SIGNATURE,
       signatureHeader: SIGNATURE_HEADER,
       secretConfigured: Boolean(WEBHOOK_SECRET),
@@ -176,6 +233,7 @@ app.post(
   '/api/links',
   wrap(async (req, res) => {
     const sid = await ensureSession(req, res);
+    if (!(await assertCsrf(req, res, sid))) return;
     const newPath = await store.createLink(sid);
     console.log(`➕ [${sid.slice(0, 8)}] Novo link: ${newPath}`);
     res.status(201).json(buildUrls(newPath));
@@ -186,6 +244,7 @@ app.delete(
   '/api/links/:token',
   wrap(async (req, res) => {
     const sid = await ensureSession(req, res);
+    if (!(await assertCsrf(req, res, sid))) return;
     const target = normalizeWebhookPath(req.params.token);
     const removed = await store.removeLink(sid, target);
     res.json({ removed });
@@ -204,6 +263,7 @@ app.delete(
   '/api/webhooks',
   wrap(async (req, res) => {
     const sid = await ensureSession(req, res);
+    if (!(await assertCsrf(req, res, sid))) return;
     await store.clearWebhooks(sid);
     res.json({ cleared: true });
   })
@@ -261,11 +321,43 @@ async function handleWebhook(req, res) {
     signatureValid = verifySignature(req.rawBody, signature, WEBHOOK_SECRET);
   }
 
-  const responseStatus = signatureValid === false ? 401 : 200;
-  const responseBody =
-    signatureValid === false ? { error: 'assinatura inválida' } : { received: true };
+  if (signatureValid === false) {
+    const responseBody = { error: 'assinatura inválida' };
+    await store.recordWebhook(ownerId, {
+      id: crypto.randomUUID(),
+      receivedAt: new Date().toISOString(),
+      path: reqPath,
+      originalUrl: req.originalUrl,
+      method: req.method,
+      ip: req.ip,
+      query: req.query,
+      contentType: req.get('content-type') || null,
+      headers: sanitizeHeaders(req.headers),
+      body: req.body ?? null,
+      rawBody: req.rawBody ? req.rawBody.toString('utf8') : '',
+      signatureValid,
+      responseStatus: 401,
+      responseBody,
+    });
+    console.warn(`⚠️  [${ownerId.slice(0, 8)}] Assinatura inválida de ${req.ip} em ${reqPath}`);
+    return res.status(401).json(responseBody);
+  }
 
-  // Registramos na sessão DONA da rota — só ela verá este webhook no painel.
+  const eventId = extractEventId(req.body);
+  const duplicate = await store.isDuplicateEvent(ownerId, eventId);
+  const responseBody = duplicate ? { received: true, duplicate: true } : { received: true };
+
+  if (!duplicate) {
+    await store.rememberEventId(ownerId, eventId);
+    await onWebhookReceived({
+      sessionId: ownerId,
+      event: req.body ?? null,
+      req,
+      eventId,
+      duplicate: false,
+    });
+  }
+
   await store.recordWebhook(ownerId, {
     id: crypto.randomUUID(),
     receivedAt: new Date().toISOString(),
@@ -275,21 +367,23 @@ async function handleWebhook(req, res) {
     ip: req.ip,
     query: req.query,
     contentType: req.get('content-type') || null,
-    headers: req.headers,
+    headers: sanitizeHeaders(req.headers),
     body: req.body ?? null,
     rawBody: req.rawBody ? req.rawBody.toString('utf8') : '',
+    eventId,
+    duplicate,
     signatureValid,
-    responseStatus,
+    responseStatus: 200,
     responseBody,
   });
 
-  if (signatureValid === false) {
-    console.warn(`⚠️  [${ownerId.slice(0, 8)}] Assinatura inválida de ${req.ip} em ${reqPath}`);
-    return res.status(responseStatus).json(responseBody);
+  if (duplicate) {
+    console.log(`↩️  [${ownerId.slice(0, 8)}] Evento duplicado (${eventId}) em ${reqPath}`);
+  } else {
+    console.log(`✅ [${ownerId.slice(0, 8)}] Webhook recebido em ${reqPath}`);
   }
 
-  console.log(`✅ [${ownerId.slice(0, 8)}] Webhook recebido em ${reqPath}`);
-  res.status(responseStatus).json(responseBody);
+  res.status(200).json(responseBody);
 }
 
 // Catch-all de POST: rotas /api/* já foram tratadas acima; o resto é webhook.

@@ -92,6 +92,6 @@ Aponte a URL do túnel + a rota aleatória (ex: `https://.../xK9mP2qR7nLs`) na c
 
 ## Próximos passos
 
-- Substituir o `TODO` em `src/server.js` pela lógica de negócio.
+- Implementar sua lógica em `src/onWebhook.js` (ver [DOCUMENTACAO.md](./DOCUMENTACAO.md#personalizar-a-lógica-de-negócio)).
 - Responder `2xx` rápido e processar o trabalho pesado de forma assíncrona (fila) para evitar retries por timeout.
-- Idempotência: se o seu servidor reenvia webhooks, guarde o ID do evento e ignore duplicados.
+- Eventos duplicados (mesmo `id` no payload) já são ignorados automaticamente — veja `EVENT_ID_FIELDS` no `.env.example`.

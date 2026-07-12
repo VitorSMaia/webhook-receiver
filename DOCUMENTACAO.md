@@ -513,23 +513,39 @@ await fetch('https://sua-url/xK9mP2qR7nLs', {
 
 ## Personalizar a lógica de negócio
 
-O ponto de extensão fica em `src/server.js`, após a validação da assinatura:
+O ponto de extensão fica em `src/onWebhook.js`, chamado por `handleWebhook` em `src/app.js` **após** a validação da assinatura e **antes** de gravar o evento no histórico (somente para eventos novos, não duplicados).
+
+### Contrato
 
 ```javascript
-const event = req.body;
-console.log('✅ Webhook recebido:', JSON.stringify(event, null, 2));
-
-// TODO: coloque aqui a lógica de negócio
-// Exemplos: salvar no banco, publicar em fila, chamar outra API
-
-res.status(200).json({ received: true });
+// src/onWebhook.js
+export async function onWebhookReceived({ sessionId, event, req, eventId, duplicate }) {
+  // sessionId — dono da rota (sessão isolada do painel)
+  // event     — corpo JSON já parseado (req.body)
+  // req       — objeto Express (headers, ip, path...)
+  // eventId   — ID extraído para idempotência (ou null)
+  // duplicate — sempre false aqui (duplicatas não reprocessam o hook)
+}
 ```
 
-Sugestões:
+### Exemplo mínimo
 
-- Responda `2xx` **rápido** e processe trabalho pesado de forma assíncrona (fila, worker).
-- Implemente **idempotência**: guarde o ID do evento e ignore duplicados se o provedor reenviar.
-- Trate erros sem retornar `5xx` para eventos já processados, se o retry do provedor for indesejado.
+```javascript
+export async function onWebhookReceived({ sessionId, event, eventId }) {
+  console.log(`[${sessionId.slice(0, 8)}] novo evento ${eventId}:`, event?.tipo);
+  // await fila.publish('webhooks', { sessionId, eventId, event });
+}
+```
+
+### Idempotência
+
+Eventos com o mesmo ID (campos `id`, `event_id` ou `eventId` por padrão; configure `EVENT_ID_FIELDS` no `.env`) são aceitos com `200` e `{ received: true, duplicate: true }`, aparecem no painel como **duplicado** e **não** disparam `onWebhookReceived` de novo.
+
+### Boas práticas
+
+- Responda `2xx` **rápido** no handler HTTP; processe trabalho pesado de forma assíncrona (fila, worker).
+- Trate erros no hook sem derrubar o servidor — use try/catch interno se necessário.
+- Não altere `res.status` / `res.json` dentro do hook; o `handleWebhook` já responde ao cliente.
 
 ---
 
@@ -620,6 +636,8 @@ webhook-receiver/
 │   └── index.js            # Entrypoint serverless da Vercel (exporta a app)
 ├── src/
 │   ├── app.js              # App Express (painel, API e rotas de webhook)
+│   ├── onWebhook.js        # Hook de lógica de negócio (customize aqui)
+│   ├── extractEventId.js   # Extração de ID para idempotência
 │   ├── server.js           # Bootstrap local (app.listen) para host persistente
 │   ├── store.js            # Store por sessão: Redis (Upstash) ou memória
 │   ├── generatePath.js     # Geração da rota aleatória

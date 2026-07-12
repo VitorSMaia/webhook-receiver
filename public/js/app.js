@@ -35,6 +35,7 @@ const state = {
   dtab: 'headers',
   vtab: 'explorer',
   config: {},
+  csrfToken: null,
   links: [],
   webhooks: [],
   selectedId: null,
@@ -71,8 +72,13 @@ function toast(msg) {
 }
 
 async function apiFetch(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  const method = (options.method || 'GET').toUpperCase();
+  if (state.csrfToken && method !== 'GET' && method !== 'HEAD') {
+    headers.set('X-CSRF-Token', state.csrfToken);
+  }
   try {
-    const res = await fetch(url, options);
+    const res = await fetch(url, { ...options, headers });
     if (!res.ok) {
       toast('Não foi possível carregar os dados (' + res.status + ')');
       throw new Error('HTTP ' + res.status);
@@ -151,6 +157,7 @@ function fmtTime(iso) {
 
 function statusOf(h) {
   if (h.signatureValid === false) return { cls: 'err', text: String(h.responseStatus || 401) };
+  if (h.duplicate) return { cls: 'warn', text: 'duplicado' };
   return { cls: 'ok', text: (h.responseStatus || 200) + ' OK' };
 }
 
@@ -327,6 +334,7 @@ async function loadState() {
   const res = await apiFetch('/api/state');
   const s = await res.json();
   state.config = s;
+  state.csrfToken = s.csrfToken || state.csrfToken;
   state.links = s.links || [];
   updateStorageLabels(s);
   renderChip();
@@ -621,7 +629,9 @@ function renderTraceTab(body, h) {
   body.append(el('h3', { class: 'detail-title', html: ICONS.info + '<span>Rastreamento</span>' }));
   body.append(
     kv([
-      ['ID do evento:', h.id],
+      ['ID interno:', h.id],
+      ['ID do evento (payload):', h.eventId || '(sem id no payload)'],
+      ['Duplicata:', h.duplicate ? 'sim' : 'não'],
       ['Recebido em:', new Date(h.receivedAt).toLocaleString('pt-BR')],
       ['Método:', h.method],
       ['Rota:', h.path],

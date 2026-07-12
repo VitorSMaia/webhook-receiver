@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { Redis } from '@upstash/redis';
 import { generateWebhookPath } from './generatePath.js';
 
@@ -9,6 +10,7 @@ import { generateWebhookPath } from './generatePath.js';
 //    (obrigatório em serverless/Vercel, onde a memória não é compartilhada).
 //  - Memória, como fallback para desenvolvimento local sem Redis.
 const MAX_WEBHOOKS = 200;
+const MAX_EVENT_IDS = 1000;
 const TTL_SECONDS = 60 * 60 * 24 * 7; // 7 dias
 
 const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
@@ -49,20 +51,63 @@ function notifySession(id) {
 const kSess = (id) => `wr:sess:${id}`;
 const kLinks = (id) => `wr:sess:${id}:links`;
 const kHooks = (id) => `wr:sess:${id}:hooks`;
+const kEventIds = (id) => `wr:sess:${id}:eventIds`;
+const kCsrf = (id) => `wr:sess:${id}:csrf`;
 const kOwner = (path) => `wr:owner:${path}`;
 
+function newCsrfToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
 // ---- backend em memória ----
-const sessions = new Map(); // id -> { links:Set, webhooks:[], lastSeen }
+const sessions = new Map(); // id -> { links:Set, webhooks:[], eventIds:Set, csrf, lastSeen }
 const pathOwner = new Map(); // path -> sessionId
 
 /** Cria uma sessão vazia. */
 export async function createSession(id) {
+  const csrf = newCsrfToken();
   if (redis) {
-    await redis.set(kSess(id), Date.now(), { ex: TTL_SECONDS });
+    await Promise.all([
+      redis.set(kSess(id), Date.now(), { ex: TTL_SECONDS }),
+      redis.set(kCsrf(id), csrf, { ex: TTL_SECONDS }),
+    ]);
     return id;
   }
-  sessions.set(id, { links: new Set(), webhooks: [], lastSeen: Date.now() });
+  sessions.set(id, {
+    links: new Set(),
+    webhooks: [],
+    eventIds: new Set(),
+    csrf,
+    lastSeen: Date.now(),
+  });
   return id;
+}
+
+/** Retorna o token CSRF da sessão (gera um se ausente). */
+export async function getCsrfToken(id) {
+  if (redis) {
+    let token = await redis.get(kCsrf(id));
+    if (!token) {
+      token = newCsrfToken();
+      await redis.set(kCsrf(id), token, { ex: TTL_SECONDS });
+    }
+    return token;
+  }
+  const s = sessions.get(id);
+  if (!s) return null;
+  if (!s.csrf) s.csrf = newCsrfToken();
+  return s.csrf;
+}
+
+/** Valida o token CSRF enviado pelo cliente. */
+export async function validateCsrf(id, token) {
+  if (!id || !token) return false;
+  const expected = await getCsrfToken(id);
+  if (!expected || typeof token !== 'string') return false;
+  const a = Buffer.from(expected);
+  const b = Buffer.from(token);
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
 }
 
 /** Retorna a sessão (valor truthy) ou null. */
@@ -78,11 +123,43 @@ export async function touchSession(id) {
       redis.expire(kSess(id), TTL_SECONDS),
       redis.expire(kLinks(id), TTL_SECONDS),
       redis.expire(kHooks(id), TTL_SECONDS),
+      redis.expire(kEventIds(id), TTL_SECONDS),
+      redis.expire(kCsrf(id), TTL_SECONDS),
     ]);
     return;
   }
   const s = sessions.get(id);
   if (s) s.lastSeen = Date.now();
+}
+
+/**
+ * Verifica se o ID de evento já foi processado nesta sessão.
+ * Retorna true se for duplicata.
+ */
+export async function isDuplicateEvent(id, eventId) {
+  if (!eventId) return false;
+  if (redis) return Boolean(await redis.sismember(kEventIds(id), eventId));
+  return sessions.get(id)?.eventIds?.has(eventId) ?? false;
+}
+
+/** Registra um ID de evento como já visto (idempotência). */
+export async function rememberEventId(id, eventId) {
+  if (!eventId) return false;
+  if (redis) {
+    await Promise.all([
+      redis.sadd(kEventIds(id), eventId),
+      redis.expire(kEventIds(id), TTL_SECONDS),
+    ]);
+    return true;
+  }
+  const s = sessions.get(id);
+  if (!s) return false;
+  s.eventIds.add(eventId);
+  if (s.eventIds.size > MAX_EVENT_IDS) {
+    const keep = [...s.eventIds].slice(-MAX_EVENT_IDS);
+    s.eventIds = new Set(keep);
+  }
+  return true;
 }
 
 /** Registra uma rota específica para uma sessão. */
