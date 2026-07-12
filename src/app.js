@@ -33,7 +33,8 @@ const BODY_LIMIT = process.env.BODY_LIMIT || '1mb';
 const WEBHOOK_RATE_LIMIT = Number(process.env.WEBHOOK_RATE_LIMIT || 60);
 const API_RATE_LIMIT = Number(process.env.API_RATE_LIMIT || 30);
 const IS_PRODUCTION =
-  process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production';
+  process.env.VERCEL_ENV === 'production' ||
+  (process.env.NODE_ENV === 'production' && !process.env.VERCEL);
 const IS_HTTPS = Boolean(PUBLIC_URL?.startsWith('https://'));
 const SECURE_COOKIE = IS_PRODUCTION || IS_HTTPS;
 const TRUST_PROXY = process.env.TRUST_PROXY === 'true' || IS_PRODUCTION;
@@ -90,18 +91,28 @@ export const appConfig = {
   usingRedis: store.usingRedis,
 };
 
-if (IS_PRODUCTION && !VERIFY_SIGNATURE) {
-  console.error('❌ VERIFY_SIGNATURE=false não é permitido em produção.');
-  process.exit(1);
+function getConfigError() {
+  if (IS_PRODUCTION && !VERIFY_SIGNATURE) {
+    return 'VERIFY_SIGNATURE=false não é permitido em produção. Defina VERIFY_SIGNATURE=true e WEBHOOK_SECRET nas variáveis de ambiente.';
+  }
+  if (VERIFY_SIGNATURE && !WEBHOOK_SECRET) {
+    return 'WEBHOOK_SECRET não definido. Configure nas variáveis de ambiente ou defina VERIFY_SIGNATURE=false (somente em desenvolvimento).';
+  }
+  return null;
 }
 
-if (VERIFY_SIGNATURE && !WEBHOOK_SECRET) {
-  console.error('❌ WEBHOOK_SECRET não definido. Copie .env.example para .env e preencha,');
-  console.error('   ou defina VERIFY_SIGNATURE=false para desativar a verificação.');
-  // Em ambiente local isto encerra o processo; em serverless a função falha
-  // ao carregar, deixando claro que falta configuração.
-  process.exit(1);
+export const configError = getConfigError();
+
+if (configError) {
+  console.error('❌', configError);
 }
+
+// Em serverless, process.exit() derruba a função inteira (500 opaco na Vercel).
+// Preferimos responder 503 com a mensagem de configuração.
+app.use((req, res, next) => {
+  if (configError) return res.status(503).json({ error: configError });
+  next();
+});
 
 // Capturamos o corpo BRUTO (Buffer) porque a assinatura HMAC é calculada sobre
 // os bytes exatos enviados. Parsear antes perderia a fidelidade byte-a-byte.
