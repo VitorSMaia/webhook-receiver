@@ -323,19 +323,31 @@ button { font-family: inherit; }
 /* Loading overlay */
 .loading-overlay {
   position: fixed; inset: 0; z-index: 100;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
-  background: rgba(0, 0, 0, 0.45); color: #fff; font-size: 14px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.45); color: #fff;
   opacity: 0; pointer-events: none; transition: opacity .2s ease;
 }
 .loading-overlay.show { opacity: 1; pointer-events: auto; }
+.loading-overlay-inner {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; transform: none; animation: none;
+}
 .loading-overlay .loading-spinner {
-  width: 32px; height: 32px; border: 3px solid rgba(255, 255, 255, 0.3);
+  position: relative; width: 32px; height: 32px; flex-shrink: 0;
+  transform: none; animation: none;
+}
+.loading-overlay .loading-spinner::after {
+  content: '';
+  position: absolute; inset: 0;
+  border: 3px solid rgba(255, 255, 255, 0.3);
   border-top-color: #fff; border-radius: 50%;
-  animation: spin .8s linear infinite;
+  animation: loading-spin .8s linear infinite;
 }
 .loading-overlay .loading-message {
   margin: 0; font-size: 14px; font-weight: 500; text-align: center; max-width: 280px;
+  transform: none; animation: none;
 }
+@keyframes loading-spin { to { transform: rotate(360deg); } }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* Loading pontual em botões */
