@@ -85,16 +85,55 @@ async function apiFetch(url, options = {}) {
   }
 }
 
-function showLoading(on) {
-  let overlay = $('#loadingOverlay');
-  if (!overlay) {
-    overlay = el('div', { class: 'loading-overlay', id: 'loadingOverlay' }, [
-      el('div', { class: 'loading-spinner' }),
-      el('div', { text: 'Carregando...' }),
-    ]);
-    document.body.appendChild(overlay);
-  }
+function showLoading(on, message = 'Carregando...') {
+  const overlay = $('#loadingOverlay');
+  if (!overlay) return;
+  const msg = $('#loadingMessage');
+  if (msg) msg.textContent = message;
   overlay.classList.toggle('show', on);
+  overlay.setAttribute('aria-busy', on ? 'true' : 'false');
+  document.documentElement.setAttribute('aria-busy', on ? 'true' : 'false');
+  const app = $('.app');
+  if (app) app.classList.toggle('app-pending', on);
+}
+
+function setButtonsLoading(buttons, on) {
+  const list = Array.isArray(buttons) ? buttons : [buttons];
+  for (const btn of list) {
+    if (!btn) continue;
+    btn.classList.toggle('is-loading', on);
+    btn.disabled = on;
+    btn.setAttribute('aria-busy', on ? 'true' : 'false');
+  }
+}
+
+const NEW_WEBHOOK_BUTTONS = () =>
+  $$('#newWebhook, #newWebhook2, #newWebhook3, #newWebhookFoot');
+const CLEAR_LOG_BUTTONS = () => $$('#clearLogs, #clearLogsSettings');
+
+const bootStartedAt = performance.now();
+const MIN_BOOT_LOADING_MS = 120;
+
+async function finishBootLoading() {
+  const elapsed = performance.now() - bootStartedAt;
+  if (elapsed < MIN_BOOT_LOADING_MS) {
+    await new Promise((r) => setTimeout(r, MIN_BOOT_LOADING_MS - elapsed));
+  }
+  showLoading(false);
+}
+
+async function boot() {
+  showLoading(true, 'Carregando sessão...');
+  try {
+    await loadState();
+    showLoading(true, 'Carregando eventos...');
+    await loadWebhooks();
+    connectSSE();
+  } catch {
+    setAutoRefresh(true);
+  } finally {
+    await finishBootLoading();
+  }
 }
 
 async function copy(text) {
@@ -777,6 +816,7 @@ function renderSettings(b) {
   b.append(
     el('button', {
       class: 'mini-btn danger',
+      id: 'clearLogsSettings',
       html: ICONS.trash + 'Limpar histórico',
       onclick: clearLogs,
     })
@@ -785,14 +825,20 @@ function renderSettings(b) {
 
 /* ---------- actions ---------- */
 async function newWebhook() {
-  const res = await apiFetch('/api/links', { method: 'POST' });
-  const link = await res.json();
-  await loadState();
-  state.links = [link, ...state.links.filter((l) => l.path !== link.path)];
-  renderChip();
-  if (state.view === 'endpoints') renderPanel('endpoints');
-  toast('Novo link gerado');
-  copy(link.publicUrl || link.localUrl);
+  const buttons = NEW_WEBHOOK_BUTTONS();
+  setButtonsLoading(buttons, true);
+  try {
+    const res = await apiFetch('/api/links', { method: 'POST' });
+    const link = await res.json();
+    await loadState();
+    state.links = [link, ...state.links.filter((l) => l.path !== link.path)];
+    renderChip();
+    if (state.view === 'endpoints') renderPanel('endpoints');
+    toast('Novo link gerado');
+    copy(link.publicUrl || link.localUrl);
+  } finally {
+    setButtonsLoading(buttons, false);
+  }
 }
 
 async function removeLink(path) {
@@ -805,11 +851,17 @@ async function removeLink(path) {
 
 async function clearLogs() {
   if (!confirm('Limpar todo o histórico de eventos?')) return;
-  await apiFetch('/api/webhooks', { method: 'DELETE' });
-  state.selectedId = null;
-  await loadWebhooks();
-  if (state.view !== 'live') renderPanel(state.view);
-  toast('Histórico limpo');
+  const buttons = CLEAR_LOG_BUTTONS();
+  setButtonsLoading(buttons, true);
+  try {
+    await apiFetch('/api/webhooks', { method: 'DELETE' });
+    state.selectedId = null;
+    await loadWebhooks();
+    if (state.view !== 'live') renderPanel(state.view);
+    toast('Histórico limpo');
+  } finally {
+    setButtonsLoading(buttons, false);
+  }
 }
 
 function pingStatus() {
@@ -904,9 +956,4 @@ $('#footDocs').addEventListener('click', (e) => {
 applyTheme();
 applyPtBrLabels();
 renderNav();
-showLoading(true);
-loadState()
-  .then(() => loadWebhooks())
-  .then(() => connectSSE())
-  .catch(() => setAutoRefresh(true))
-  .finally(() => showLoading(false));
+boot();
