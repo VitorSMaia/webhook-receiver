@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "sign": "node scripts/sign.js"
+    "sign": "node scripts/sign.js",
+    "test": "vitest run"
   },
   "engines": {
     "node": ">=18"
@@ -15,6 +16,11 @@
   "dependencies": {
     "@upstash/redis": "^1.38.0",
     "dotenv": "^16.4.7",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0"
+  },
+  "devDependencies": {
+    "supertest": "^7.1.0",
+    "vitest": "^3.0.9"
   }
 }

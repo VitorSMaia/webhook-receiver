@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import { generateWebhookPath, normalizeWebhookPath } from './generatePath.js';
 import { verifySignature } from './verifySignature.js';
 import * as store from './store.js';
@@ -24,6 +25,17 @@ const FIXED_INITIAL_PATH = normalizeWebhookPath(process.env.WEBHOOK_PATH);
 let fixedPathUsed = false;
 
 const SESSION_COOKIE = 'wr_session';
+const BODY_LIMIT = process.env.BODY_LIMIT || '1mb';
+const WEBHOOK_RATE_LIMIT = Number(process.env.WEBHOOK_RATE_LIMIT || 60);
+const IS_HTTPS = Boolean(PUBLIC_URL?.startsWith('https://'));
+
+const webhookLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: WEBHOOK_RATE_LIMIT,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'limite de requisições excedido' },
+});
 
 // Config exposta para o bootstrap local (logs de inicialização).
 // NÃO renomeie para `config`: na Vercel esse é um export reservado que o
@@ -51,6 +63,7 @@ if (VERIFY_SIGNATURE && !WEBHOOK_SECRET) {
 // os bytes exatos enviados. Parsear antes perderia a fidelidade byte-a-byte.
 app.use(
   express.json({
+    limit: BODY_LIMIT,
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
@@ -101,6 +114,7 @@ async function ensureSession(req, res) {
   await store.addLink(id, initialPathForSession());
   res.cookie(SESSION_COOKIE, id, {
     httpOnly: true,
+    secure: IS_HTTPS,
     sameSite: 'lax',
     path: '/',
     maxAge: 1000 * 60 * 60 * 24 * 7,
@@ -195,6 +209,31 @@ app.delete(
   })
 );
 
+// SSE — notifica o painel quando um webhook é gravado na sessão.
+app.get(
+  '/api/events/stream',
+  wrap(async (req, res) => {
+    const sid = await ensureSession(req, res);
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders?.();
+    res.write(': connected\n\n');
+    store.subscribeSessionEvents(sid, res);
+    const heartbeat = setInterval(() => {
+      try {
+        res.write(': ping\n\n');
+      } catch {
+        clearInterval(heartbeat);
+      }
+    }, 30000);
+    req.on('close', () => {
+      clearInterval(heartbeat);
+      store.unsubscribeSessionEvents(sid, res);
+    });
+  })
+);
+
 // Healthcheck simples (não cria sessão).
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', uptime: process.uptime(), storage: store.usingRedis ? 'redis' : 'memory' });
@@ -254,6 +293,6 @@ async function handleWebhook(req, res) {
 }
 
 // Catch-all de POST: rotas /api/* já foram tratadas acima; o resto é webhook.
-app.post('*', wrap(handleWebhook));
+app.post('*', webhookLimiter, wrap(handleWebhook));
 
 export default app;

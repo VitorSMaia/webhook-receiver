@@ -19,6 +19,32 @@ const redis = REDIS_URL && REDIS_TOKEN ? new Redis({ url: REDIS_URL, token: REDI
 /** Indica se o backend ativo é o Redis (senão, memória). */
 export const usingRedis = Boolean(redis);
 
+// Listeners SSE por sessão (processo local; em serverless multi-instância use polling).
+const sseListeners = new Map(); // sessionId -> Set<res>
+
+/** Registra um cliente SSE para receber notificações da sessão. */
+export function subscribeSessionEvents(id, res) {
+  if (!sseListeners.has(id)) sseListeners.set(id, new Set());
+  sseListeners.get(id).add(res);
+}
+
+/** Remove um cliente SSE. */
+export function unsubscribeSessionEvents(id, res) {
+  sseListeners.get(id)?.delete(res);
+}
+
+function notifySession(id) {
+  const set = sseListeners.get(id);
+  if (!set) return;
+  for (const res of set) {
+    try {
+      res.write('data: refresh\n\n');
+    } catch {
+      set.delete(res);
+    }
+  }
+}
+
 // ---- chaves Redis ----
 const kSess = (id) => `wr:sess:${id}`;
 const kLinks = (id) => `wr:sess:${id}:links`;
@@ -114,12 +140,14 @@ export async function recordWebhook(id, entry) {
     await redis.lpush(kHooks(id), entry);
     await redis.ltrim(kHooks(id), 0, MAX_WEBHOOKS - 1);
     await redis.expire(kHooks(id), TTL_SECONDS);
+    notifySession(id);
     return entry;
   }
   const s = sessions.get(id);
   if (!s) return null;
   s.webhooks.unshift(entry);
   if (s.webhooks.length > MAX_WEBHOOKS) s.webhooks.length = MAX_WEBHOOKS;
+  notifySession(id);
   return entry;
 }
 
