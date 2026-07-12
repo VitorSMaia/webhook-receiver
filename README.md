@@ -28,15 +28,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 Ajuste `SIGNATURE_HEADER` para o nome do header que o **seu** servidor usa.
 
-### Desativar a verificação de assinatura
-
-Para aceitar webhooks sem verificar a assinatura (dev, ou provedores que não assinam), defina no `.env`:
-
-```
-VERIFY_SIGNATURE=false
-```
-
-Com isso o `WEBHOOK_SECRET` deixa de ser obrigatório e o endpoint aceita qualquer POST. ⚠️ Não use em produção exposta à internet sem outra camada de proteção.
+Sem `WEBHOOK_SECRET` no `.env`, os webhooks são aceitos sem verificação HMAC — útil em desenvolvimento. Com o segredo definido, assinaturas inválidas retornam `401`.
 
 ## Rodar
 

@@ -83,8 +83,7 @@ Todas as configurações ficam no arquivo `.env`. Use o `.env.example` como refe
 | `PORT` | `3000` | Porta em que o servidor sobe |
 | `WEBHOOK_PATH` | *(gerada automaticamente)* | Rota fixa para o webhook (ex: `/minha-rota`). Se omitida, uma rota aleatória é criada a cada inicialização |
 | `PUBLIC_URL` | — | URL pública do túnel (ngrok), sem barra no final. Exibe a URL completa do webhook ao iniciar |
-| `VERIFY_SIGNATURE` | `true` | `true` = exige assinatura válida; `false` = aceita qualquer POST |
-| `WEBHOOK_SECRET` | — | Segredo compartilhado com o servidor que envia os webhooks |
+| `WEBHOOK_SECRET` | — | Segredo compartilhado com o servidor que envia os webhooks. Se omitido, webhooks são aceitos sem verificação HMAC |
 | `SIGNATURE_HEADER` | `x-signature` | Nome do header HTTP onde a assinatura é enviada |
 
 ### Rota aleatória do webhook
@@ -115,19 +114,19 @@ Copie o valor gerado para `WEBHOOK_SECRET` no `.env`. O **mesmo valor** deve est
 
 ```env
 PORT=3000
-VERIFY_SIGNATURE=true
 WEBHOOK_SECRET=a1b2c3d4e5f6...seu_segredo_aqui
 SIGNATURE_HEADER=x-signature
 ```
 
 ### Exemplo de `.env` (sem verificação — apenas dev)
 
+Omita `WEBHOOK_SECRET` ou deixe vazio:
+
 ```env
 PORT=3000
-VERIFY_SIGNATURE=false
 ```
 
-> **Atenção:** com `VERIFY_SIGNATURE=false`, qualquer pessoa que souber a URL pode enviar POSTs. Use somente em ambiente local ou com outra camada de proteção (firewall, VPN, etc.).
+> **Atenção:** sem `WEBHOOK_SECRET`, qualquer pessoa que souber a URL pode enviar POSTs. Use somente em ambiente local ou com outra camada de proteção (firewall, VPN, etc.).
 
 ### Ajustar o header de assinatura
 
@@ -184,7 +183,7 @@ Abra o **painel de administração** em `http://localhost:3000/` para acompanhar
 
 Rota única gerada ao iniciar (ou fixada via `WEBHOOK_PATH`). Recebe o corpo JSON do evento.
 
-**Com verificação ativa (`VERIFY_SIGNATURE=true`):**
+**Com `WEBHOOK_SECRET` definido:**
 
 | Situação | Status | Resposta |
 |----------|--------|----------|
@@ -322,7 +321,7 @@ curl -X POST http://localhost:3000/xK9mP2qR7nLs \
 
 ### Opção 3 — Sem assinatura (dev)
 
-Defina `VERIFY_SIGNATURE=false` no `.env`, reinicie o servidor e envie:
+Remova ou omita `WEBHOOK_SECRET` no `.env`, reinicie o servidor e envie:
 
 ```bash
 curl -X POST http://localhost:3000/xK9mP2qR7nLs \
@@ -553,8 +552,8 @@ Eventos com o mesmo ID (campos `id`, `event_id` ou `eventId` por padrão; config
 
 ### `WEBHOOK_SECRET não definido` ao iniciar
 
-- Defina `WEBHOOK_SECRET` no `.env`, **ou**
-- Defina `VERIFY_SIGNATURE=false` para desativar a verificação.
+- Defina `WEBHOOK_SECRET` no `.env` para ativar a verificação, **ou**
+- Omita `WEBHOOK_SECRET` para aceitar webhooks sem verificação (somente dev).
 
 ### Sempre retorna `401 assinatura inválida`
 
@@ -589,7 +588,7 @@ Eventos com o mesmo ID (campos `id`, `event_id` ou `eventId` por padrão; config
 
 ## Boas práticas em produção
 
-1. **Mantenha `VERIFY_SIGNATURE=true`** e use um segredo longo e aleatório.
+1. **Defina `WEBHOOK_SECRET`** em produção e use um segredo longo e aleatório.
 2. **Nunca commite** o arquivo `.env` — ele contém o segredo.
 3. **Responda rápido** (`< 5s`) para evitar retries desnecessários do provedor.
 4. **Processe de forma assíncrona** o que for pesado (e-mail, PDF, integrações lentas).
@@ -613,7 +612,7 @@ Eventos com o mesmo ID (campos `id`, `event_id` ou `eventId` por padrão; config
 2. **Crie um Redis Upstash** (grátis): em [upstash.com](https://upstash.com) ou pela própria Vercel em **Storage → Marketplace → Upstash for Redis**. A integração da Vercel injeta as variáveis automaticamente no projeto.
 3. **Defina as variáveis de ambiente** do projeto na Vercel (Settings → Environment Variables):
    - `UPSTASH_REDIS_REST_URL` e `UPSTASH_REDIS_REST_TOKEN` (ou `KV_REST_API_URL` / `KV_REST_API_TOKEN` da integração).
-   - `VERIFY_SIGNATURE` (`true`/`false`) e, se `true`, `WEBHOOK_SECRET` e `SIGNATURE_HEADER`.
+   - `WEBHOOK_SECRET` e `SIGNATURE_HEADER` (recomendado em produção).
    - `PUBLIC_URL` = a URL do seu deploy (ex: `https://webhook-receiver.vercel.app`), para o painel exibir as URLs completas.
 4. **Deploy.** O `vercel.json` roteia todas as requisições para `api/index.js` (a app Express); o painel, a API e as rotas de webhook são resolvidos pelo Express.
 

@@ -1,4 +1,3 @@
-process.env.VERIFY_SIGNATURE = 'true';
 process.env.WEBHOOK_SECRET = 'test-secret';
 
 import { describe, it, expect, beforeAll } from 'vitest';

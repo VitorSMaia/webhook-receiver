@@ -21,8 +21,8 @@ const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 const PUBLIC_URL = process.env.PUBLIC_URL?.replace(/\/$/, '');
 // Nome do header onde o servidor de origem envia a assinatura.
 const SIGNATURE_HEADER = process.env.SIGNATURE_HEADER || 'x-signature';
-// Verificação de assinatura ligada por padrão (VERIFY_SIGNATURE=false desativa).
-const VERIFY_SIGNATURE = process.env.VERIFY_SIGNATURE !== 'false';
+// Verificação automática quando WEBHOOK_SECRET está definido.
+const VERIFY_SIGNATURE = Boolean(WEBHOOK_SECRET);
 // Se definido, é usado como link inicial da PRIMEIRA sessão criada (útil com
 // ngrok/rota fixa). As demais sessões recebem rotas aleatórias.
 const FIXED_INITIAL_PATH = normalizeWebhookPath(process.env.WEBHOOK_PATH);
@@ -90,29 +90,6 @@ export const appConfig = {
   secretConfigured: Boolean(WEBHOOK_SECRET),
   usingRedis: store.usingRedis,
 };
-
-function getConfigError() {
-  if (IS_PRODUCTION && !VERIFY_SIGNATURE) {
-    return 'VERIFY_SIGNATURE=false não é permitido em produção. Defina VERIFY_SIGNATURE=true e WEBHOOK_SECRET nas variáveis de ambiente.';
-  }
-  if (VERIFY_SIGNATURE && !WEBHOOK_SECRET) {
-    return 'WEBHOOK_SECRET não definido. Configure nas variáveis de ambiente ou defina VERIFY_SIGNATURE=false (somente em desenvolvimento).';
-  }
-  return null;
-}
-
-export const configError = getConfigError();
-
-if (configError) {
-  console.error('❌', configError);
-}
-
-// Em serverless, process.exit() derruba a função inteira (500 opaco na Vercel).
-// Preferimos responder 503 com a mensagem de configuração.
-app.use((req, res, next) => {
-  if (configError) return res.status(503).json({ error: configError });
-  next();
-});
 
 // Capturamos o corpo BRUTO (Buffer) porque a assinatura HMAC é calculada sobre
 // os bytes exatos enviados. Parsear antes perderia a fidelidade byte-a-byte.
@@ -327,7 +304,7 @@ async function handleWebhook(req, res) {
 
   // null = verificação desativada; true/false = resultado da checagem.
   let signatureValid = null;
-  if (VERIFY_SIGNATURE) {
+  if (WEBHOOK_SECRET) {
     const signature = req.get(SIGNATURE_HEADER);
     signatureValid = verifySignature(req.rawBody, signature, WEBHOOK_SECRET);
   }
